@@ -31,6 +31,9 @@ contract D21 is IVotable {
     // Mapping of parties and their names
     mapping (string => address) public partiesNames;
 
+    // Mapping of parties and their names
+    address[] public partiesAddresses;
+
     /**
     CONSTRUCTOR
     */
@@ -117,6 +120,9 @@ contract D21 is IVotable {
 
         // Create a party
         parties[msg.sender] = Party(name, 0);
+
+        // Add the party to the list of addresses
+        partiesAddresses.push(msg.sender);
     }
 
     // Vote as a voter for a party
