@@ -10,7 +10,10 @@ contract D21 is IVotable {
     */
 
     // One week in seconds
-    uint64 constant DELTA_7DAYS = 7 * 24 * 60 * 60;
+    uint private constant DELTA_7DAYS = 7 * 24 * 60 * 60;
+
+    // One week in seconds
+    address private constant ADDRESS_ZERO = address(uint160(0));
 
     /**
     STATE
@@ -20,16 +23,19 @@ contract D21 is IVotable {
     address immutable owner;
 
     // This contract's time of creation
-    uint immutable createdAt;
+    uint immutable deadline;
 
     // Mapping of voters and their addresses
-    mapping (address => Voter) public voters;
+    mapping(address => Voter) internal voters;
 
     // Mapping of parties and their addresses
-    mapping (address => Party) public parties;
+    mapping(address => Party) internal parties;
 
     // Mapping of parties and their names
-    mapping (string => address) public partiesNames;
+    mapping(string => address) internal partiesNames;
+
+    // List of parties addresses
+    address[] public partiesAddresses;
 
     /**
     CONSTRUCTOR
@@ -38,22 +44,12 @@ contract D21 is IVotable {
     // Constructor to set the owner
     constructor() {
         owner = msg.sender;
-        createdAt = block.timestamp;
+        deadline = block.timestamp + DELTA_7DAYS;
     }
 
     /**
     MODIFIERS
     */
-
-    // Prevents reentrancy attack. Source: https://solidity-by-example.org/function-modifier/
-    bool locked;
-    modifier noReentrancy() {
-        require(!locked, "No reentrancy");
-
-        locked = true;
-        _;
-        locked = false;
-    }
 
     // Gives access only to the owner
     modifier onlyOwner() {
@@ -63,29 +59,10 @@ contract D21 is IVotable {
     }
 
     // Locks a function X seconds after contract's creation time
-    modifier maxSecondsSinceCreation(uint64 delta) {
-        require(block.timestamp < createdAt + delta, "Expired");
+    modifier lockDeadline() {
+        require(block.timestamp < deadline, "Expired");
 
         _;
-    }
-
-    /**
-    PURE FUNCTIONS
-    */
-
-    // Returns true when the calldata string is empty
-    function strEmpty(string calldata s) internal pure returns(bool) {
-        return bytes(s).length == 0;
-    }
-
-    // Returns true when the storage string is empty
-    function strEmpty(string storage s) internal view returns(bool) {
-        return bytes(s).length == 0;
-    }
-
-    // Returns true when the address is zero
-    function addressIsZero(address adr) internal pure returns(bool) {
-        return adr == address(uint160(0));
     }
 
     /**
@@ -93,7 +70,7 @@ contract D21 is IVotable {
     */
 
     // Add an eligible voter
-    function addVoter(address voterNew) external onlyOwner maxSecondsSinceCreation(DELTA_7DAYS) {
+    function addVoter(address voterNew) external onlyOwner lockDeadline {
         voters[voterNew] = Voter(2, 1);
     }
 
@@ -102,46 +79,60 @@ contract D21 is IVotable {
     */
 
     // Returns time till the end
-    function timeTillEnd() external view returns(int) {
-        return int(createdAt + DELTA_7DAYS) - int(block.timestamp);
+    function timeTillEnd() external view returns (uint) {
+        return deadline > block.timestamp
+        ? deadline - block.timestamp
+        : 0;
+    }
+
+    // Returns a party
+    function getParty(address partyAddress) external view returns (Party memory) {
+        return parties[partyAddress];
     }
 
     // Registers a party for an owner
-    function registerParty(string calldata name) external noReentrancy maxSecondsSinceCreation(DELTA_7DAYS) {
-        require(!strEmpty(name), "Name invalid");
-        require(addressIsZero(partiesNames[name]), "Name taken");
-        require(strEmpty(parties[msg.sender].name), "Already registered before");
+    function registerParty(string calldata name) external lockDeadline {
+        require(bytes(name).length != 0, "Name invalid");
+        require(partiesNames[name] == ADDRESS_ZERO, "Name taken");
+        require(parties[msg.sender].owner == ADDRESS_ZERO, "Already registered before");
 
         // Assign a party to it's owner
         partiesNames[name] = msg.sender;
 
         // Create a party
-        parties[msg.sender] = Party(name, 0);
+        parties[msg.sender] = Party(msg.sender, 0, name);
+
+        // Add the party to the list
+        partiesAddresses.push(msg.sender);
     }
 
     // Vote as a voter for a party
-    function vote(address party, bool positive) external noReentrancy override maxSecondsSinceCreation(DELTA_7DAYS) {
+    function vote(address partyAddr, bool positive) external override lockDeadline {
+        // Storage alias to save some gas
+        Voter storage v = voters[msg.sender];
+        Party storage p = parties[partyAddr];
+
         // Check if party exist (the owner's address is not 0x0000)
-        require(!strEmpty(parties[party].name), "Party does not exist");
+        require(p.owner != ADDRESS_ZERO, "No party");
 
         if (positive) {
             // Check if the voter has any positive votes left
-            require(voters[msg.sender].positive > 0, "No positive votes");
+            require(v.positive > 0, "No + votes");
 
             // Subtract the vote from the voter
-            voters[msg.sender].positive--;
+            v.positive--;
 
             // Add the vote to the party
-            parties[party].votes += 1;
+            p.votes += 1;
         } else {
             // Check if the voter has any negative votes left
-            require(voters[msg.sender].negative > 0, "No negative votes");
+            require(v.negative > 0, "No - votes");
 
             // Subtract the vote from the voter
-            voters[msg.sender].negative--;
+            v.negative--;
 
             // Subtract the vote from the party
-            parties[party].votes -= 1;
+            p.votes -= 1;
         }
     }
 
@@ -157,7 +148,8 @@ contract D21 is IVotable {
 
     // Structure holding current information about a party
     struct Party {
+        address owner;
+        int64 votes;
         string name;
-        int votes;
     }
 }
